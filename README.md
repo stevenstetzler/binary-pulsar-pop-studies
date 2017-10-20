@@ -1,1 +1,3 @@
-# binary_pulsar_pop_studies
+# binary-pulsar-pop-studies
+
+Scripts and analysis code I wrote to test binary pulsar population statistics

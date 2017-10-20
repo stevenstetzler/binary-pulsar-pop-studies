@@ -1,0 +1,151 @@
+import math
+import random
+import tempo_utils
+from decimal import Decimal
+import numpy as np
+from mcmc_plots import make_plot_two_param
+from mcmc_plots import make_plot_one_param
+from class_defs import parameter
+import simulation_utils
+
+def convert_sec_to_hms(position):
+	hours = int(position / 3600.)
+	position = position - hours * 3600
+	minutes = int(position / 60.)
+	position = position - minutes * 60
+	seconds_whole = str(position)
+	seconds = position
+
+	hours = str(hours)
+	minutes = str(minutes)
+	seconds = str(seconds)
+
+	if len(hours) == 1:
+		hours = '0' + hours
+	if len(minutes) == 1:
+		minutes = '0' + minutes
+	if len(seconds_whole) == 1:
+		seconds = '0' + seconds
+
+	return hours + ':' + minutes + ':' + seconds
+
+
+def convert_hms_to_sec(position):
+	split_vals = position.split(":")
+	hours = float(split_vals[0])
+	minutes = float(split_vals[1])
+	seconds = float(split_vals[2])
+	return 3600.*hours + 60.*minutes + seconds
+
+
+# Compute an acceptance probability based on the chi-squared fit values of the timing model with the current and proposed parameters
+def get_acceptance_prob(chi2_current, chi2_proposed):
+	try:
+		prob =  math.exp((-chi2_proposed + chi2_current)/10000.)
+	except:
+		prob = 1.0
+	return prob
+
+# Get a set of new parameters using the current ones. Assume each paramater comes from a gaussian distribution with a given mean and standard deviation
+# Reset the distribution to have a mean of the new value drawn from the previous distrubution
+def get_new_params(current_params):
+	return_params = []
+	for param in current_params:
+		if param.get_std_dev() == 0:
+			return_params.append(param)
+			continue
+		#print "Changing param", param.get_name()
+		param_mean = param.get_mean()
+		param_std_dev = param.get_std_dev()
+		# Get a new parameter value by sampling the parameter distribution, a Gaussian is used here
+		new_param_val = random.gauss(float(param_mean), float(param_std_dev))
+		return_params.append(parameter(param.get_name(), [new_param_val, new_param_val, param_std_dev]))
+	return return_params
+
+
+# Run the MCMC simulation using the Metropolis algorithm given the intial parameters
+# Returns a list of all explored parameters
+def run_simulation(initial_params, num_walkers=1, num_iterations=100):
+
+	explored_params = []
+	chi2_initial = run_tempo_with_params(initial_params)
+
+	for walker in range(0, num_walkers):
+		print "Begin simulation", walker
+		percent_accepted = 0
+		walker_explored_params = []
+		current_params = initial_params
+		chi2_current = chi2_initial
+		for iteration in range(0, num_iterations):
+			if iteration % 100 == 0:
+				print str(100 * (walker/float(num_walkers) +  iteration/float(num_walkers*num_iterations))) + "% done"
+			# Get a new set of parameters, drawing a new mean for the distribution describing each parameter from the curent prior distribution
+			proposed_params = get_new_params(current_params)
+			# Run tempo with the new set of parameters and grab the chi-squared value of the resulting fit
+			chi2_proposed = run_tempo_with_params(proposed_params)
+			# A result of None indicates that the fit didn't converge. Do not accept these parameters
+			if chi2_proposed is None:
+				walker_explored_params.append(current_params)
+				continue
+			
+			# Choose whether or not to keep the proposed parameters based on the proposed and current chi-squared values
+			r = random.uniform(0, 1)
+			if r < min([get_acceptance_prob(chi2_current, chi2_proposed), 1]):
+				current_params = proposed_params
+				chi2_current = chi2_proposed
+				percent_accepted += 1.
+			walker_explored_params.append(current_params)
+		explored_params.append(walker_explored_params)
+		percent_accepted *= 100./num_iterations
+		print "Walker", walker, "% Accepted:", percent_accepted
+		
+	varying_params = ''
+	for param in initial_params:
+		if param.get_std_dev() != 0:
+			varying_params += param.get_name() + "_"
+
+	filename = "simulation_results/" + varying_params + "num_walkers_" + str(num_walkers) + "_num_iterations_" + str(num_iterations) + ".txt"
+	simulation_utils.print_params_to_file(explored_params, filename)
+	return  explored_params
+
+
+# Construct a new par file with new parameters for DM, RA, Dec, Period, and Period Derivative
+# The new par file is stored in 'temp_par.par'
+def make_par_file_with_params(params, par_filename):
+	par_file = open('/.lustre/aoc/users/kstovall/sstetzler/0158+21/0158+21.par', 'r')
+	par_lines = par_file.readlines()
+	par_lines = [line for line in par_lines if not line.startswith('DM')]
+	par_lines = [line for line in par_lines if not line.startswith('RAJ')]
+	par_lines = [line for line in par_lines if not line.startswith('DECJ')]
+	par_lines = [line for line in par_lines if not line.startswith('F0')]
+	par_lines = [line for line in par_lines if not line.startswith('F1')]
+	for param in params:
+		param_val = param.get_val()
+		if param.get_name() is 'F1':
+			val_as_str = '{:.12}'.format(param_val)
+			param_val = val_as_str.replace('e','D')
+			param_val = val_as_str.replace('E','D')
+			par_lines.append(param.get_name() + ' ' + param_val + ' 0')
+		elif param.get_name() is 'RAJ' or param.get_name() is 'DECJ':
+			param_val = convert_sec_to_hms(param.get_val())
+			par_lines.append(param.get_name() + ' ' + param_val + ' 0')
+		else:
+			par_lines.append(param.get_name() + ' ' + str(param_val) + ' 0')
+	par_out = open(par_filename, 'w')
+	for line in par_lines:
+		if '\n' not in line:
+			line += '\n'
+		par_out.write(line)
+
+
+# Run Tempo with the given parameters, using the tempo_utils library
+# Returns the resulting chi-squared fit value for the model using the given parameters
+def run_tempo_with_params(params):
+	par_filename = 'temp_par.par'
+	make_par_file_with_params(params, par_filename)
+	toa_file = '/.lustre/aoc/users/kstovall/sstetzler/0158+21/J0158+21_TOA.tim'
+	toas = tempo_utils.read_toa_file(toa_file, ignore_blanks=True, convert_skips=True)
+	(chi_squared, num_doff, rms) = tempo_utils.run_tempo(toas, par_filename)
+	return chi_squared
+
+

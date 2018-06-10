@@ -62,7 +62,16 @@ def main():
 
 		idx_1 = np.where(pars == idx_name_1)[0][0]
 		idx_2 = np.where(pars == idx_name_2)[0][0]
-		
+	
+		a1_idx = np.where(pars == 'A1')[0][0]
+	
+		use_pb = 'PB' in pars
+	
+		if use_pb:
+			pb_idx = np.where(pars == 'PB')[0][0]
+		else:
+			fb0_idx = np.where(pars == 'FB0')[0][0]
+
 		save_dir = os.path.join(out_dir, sim_name, pulsar_name)
 		make_directory(save_dir)
 
@@ -88,23 +97,37 @@ def main():
 
 					val_1 = data[idx_1]
 					val_2 = data[idx_2]
+					
+					a1 = data[a1_idx]
+	
+					if use_pb:
+						pb = data[pb_idx] * SECPERDAY
+					else:
+						fb0 = data[fb0_idx]
+						pb = (1.0 / fb0) / SECPERDAY
 
 					if M2 and SINI:
 						sini = val_2	
 						cosi = sqrt(1. - sini**2.)
+
+						m2 = val_1
+						massfunc = (4. * np.pi**2 / Tsun) * a1**3. / pb**2.
+						m1 = ((m2 * sini)**3. / massfunc)**0.5 - m2
 					elif H3 and STIG:
 						h3 = val_1
 						stig = val_2
 						sini = 2. * stig / (1. + stig**2.)
 						cosi = sqrt(1. - sini**2.)
+						m1 = 0
 					elif H3 and H4:
 						h3 = val_1
 						h4 = val_2
 						stig = h4 / h3
 						sini = 2. * stig / (1. + stig**2.)
 						cosi = sqrt(1. - sini**2.)
+						m1 = 0
 
-					outfile.write("{} {} {}\n".format(val_1, val_2, cosi))
+					outfile.write("{} {} {} {}\n".format(val_1, val_2, cosi, m1))
 
 
 if __name__ == "__main__":
